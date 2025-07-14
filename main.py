@@ -350,7 +350,7 @@ def save_user_data(user_id, data):
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def is_premium_user(user_id):
+async def is_premium_user(user_id):
     """ユーザーがプレミアムかどうかを判定"""
     try:
         # サーバーオーナーの特別判定
@@ -374,10 +374,22 @@ def is_premium_user(user_id):
         
         member = community_guild.get_member(int(user_id))
         if not member:
-            logger.warning(f"User {user_id} not found in community server {community_guild.name}")
-            logger.info(f"Debug: Guild has {community_guild.member_count} members")
-            logger.info(f"Debug: This may be due to the user having a role higher than the Bot's role")
-            return False
+            logger.info(f"User {user_id} not found in cache, trying to fetch from API...")
+            try:
+                # キャッシュにない場合はAPIから直接取得を試す
+                member = await community_guild.fetch_member(int(user_id))
+                logger.info(f"Successfully fetched user {user_id} from API")
+            except discord.NotFound:
+                logger.warning(f"User {user_id} not found in community server {community_guild.name}")
+                logger.info(f"Debug: Guild has {community_guild.member_count} members")
+                return False
+            except discord.Forbidden:
+                logger.warning(f"Permission denied when fetching user {user_id} from community server")
+                logger.info(f"Debug: This may be due to insufficient bot permissions")
+                return False
+            except Exception as e:
+                logger.error(f"Error fetching user {user_id}: {e}")
+                return False
         
         logger.info(f"Debug: Found member {member.name}#{member.discriminator}")
         logger.info(f"Debug: Member roles: {[f'{role.name}({role.id})' for role in member.roles]}")
@@ -1415,7 +1427,7 @@ async def on_raw_reaction_add(payload):
                     logger.info(f"ユーザー {user.name} ({user.id}) のデータをマイグレーションしました")
             
             # プレミアム状態確認
-            is_premium = is_premium_user(user.id)
+            is_premium = await is_premium_user(user.id)
             
             # ユーザー情報とstatusを更新
             user_data["user_id"] = str(user.id)
