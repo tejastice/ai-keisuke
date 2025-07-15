@@ -17,6 +17,101 @@ import random
 import re
 import io
 import aiohttp
+import subprocess
+
+# URL検出関数
+def contains_url(text):
+    """メッセージにURLが含まれているかチェック"""
+    url_pattern = r'https?://[^\s]+'
+    return bool(re.search(url_pattern, text))
+
+def is_url_only_message(text):
+    """URLのみのメッセージかチェック（前後に少しのテキストは許可）"""
+    url_pattern = r'https?://[^\s]+'
+    # まずURLが含まれているかチェック
+    if not re.search(url_pattern, text):
+        return False
+    # URLを除去した残りのテキストをチェック
+    text_without_urls = re.sub(url_pattern, '', text).strip()
+    return len(text_without_urls) <= 20  # 20文字以下なら「URLのみ」とみなす
+
+def extract_urls_from_text(text):
+    """テキストからURLを抽出"""
+    url_pattern = r'https?://[^\s]+'
+    return re.findall(url_pattern, text)
+
+def extract_text_from_html(html_content):
+    """HTMLから本文テキストを抽出"""
+    if not html_content:
+        return ""
+    
+    # CSS styleタグを除去
+    text = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # CSS linkタグを除去
+    text = re.sub(r'<link[^>]*>', '', text, flags=re.IGNORECASE)
+    
+    # JavaScript scriptタグを除去
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # JSON-LD scriptタグを除去
+    text = re.sub(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # CSS内のクラス名やスタイル定義を除去
+    text = re.sub(r'[^}]*{[^}]*}', '', text)
+    
+    # BRタグを改行に変換
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    
+    # Pタグの終了を改行に変換
+    text = re.sub(r'</p>', '\n\n', text, flags=re.IGNORECASE)
+    
+    # 見出しタグの終了を改行に変換
+    text = re.sub(r'</h[1-6]>', '\n\n', text, flags=re.IGNORECASE)
+    
+    # divタグの終了を改行に変換
+    text = re.sub(r'</div>', '\n', text, flags=re.IGNORECASE)
+    
+    # その他のHTMLタグを除去
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # 3つ以上の連続改行を2つに制限
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # 各行の前後の空白を削除
+    lines = text.split('\n')
+    lines = [line.strip() for line in lines]
+    text = '\n'.join(lines)
+    
+    # 空行を削除してから結合
+    text = re.sub(r'\n\s*\n', '\n\n', text)
+    text = text.strip()
+    
+    return text
+
+async def fetch_url_content(url):
+    """URLからコンテンツを取得してテキストを抽出"""
+    try:
+        # curlコマンドを使用してHTTPSサイトから取得（30秒タイムアウト）
+        result = subprocess.run(['curl', '-s', url], capture_output=True, text=True, timeout=30)
+        
+        if result.returncode != 0:
+            logger.error(f"Curl Error: {result.stderr}")
+            return None
+        
+        html_content = result.stdout
+        
+        # 本文を抽出
+        text_content = extract_text_from_html(html_content)
+        
+        return text_content
+        
+    except subprocess.TimeoutExpired:
+        logger.error(f"URL取得タイムアウト (30秒): {url}")
+        return None
+    except Exception as e:
+        logger.error(f"URL取得エラー: {e}")
+        return None
 
 # スクリプトのディレクトリを基準に.envファイルを読み込む
 script_dir = Path(__file__).parent
@@ -1382,7 +1477,7 @@ async def on_raw_reaction_add(payload):
         return
     
     # リアクションの種類をチェック
-    if payload.emoji.name in ['👍', '🎤', '❤️', '❓', '✏️', '📝']:
+    if payload.emoji.name in ['👍', '🎤', '❤️', '❓', '✏️', '📝', '🌐']:
         server_id = str(payload.guild_id)
         channel_id = str(payload.channel_id)
         
@@ -2127,6 +2222,87 @@ async def on_raw_reaction_add(payload):
                         await channel.send(f"{user.mention} ❌ エラーが発生しました。管理者にお問い合わせください。")
                 else:
                     await channel.send(f"{user.mention} ⚠️ メッセージに内容がありません。")
+            
+            # 🌐 URL取得：URLからコンテンツを取得してテキストファイルとして保存
+            elif payload.emoji.name == '🌐':
+                # メッセージからURLを抽出
+                urls = extract_urls_from_text(message.content) if message.content else []
+                
+                if urls:
+                    # 処理開始メッセージ
+                    message_link = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
+                    await channel.send(f"{user.mention} 🌐 URLの内容を取得するよ〜！ちょっと待っててね\n📎 元メッセージ: {message_link}")
+                    
+                    # 最初のURLのみ処理
+                    url = urls[0]
+                    content = await fetch_url_content(url)
+                    
+                    if content and content.strip():
+                        try:
+                            # ファイル名を生成
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            filename = f"{timestamp}_url_content.txt"
+                            file_path = script_dir / "attachments" / filename
+                            
+                            # ファイルに保存
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                f.write(f"取得元URL: {url}\n")
+                                f.write(f"取得日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                                f.write("=" * 50 + "\n\n")
+                                f.write(content)
+                            
+                            logger.info(f"URLコンテンツファイル作成: {file_path}")
+                            
+                            # 先頭100文字のプレビュー
+                            preview = content[:100] + "..." if len(content) > 100 else content
+                            
+                            # 結果を送信
+                            embed = discord.Embed(
+                                title="🌐 URLの内容を取得しました",
+                                description=f"**URL**: {url}\n**ファイル名**: `{filename}`",
+                                color=0x4285f4
+                            )
+                            
+                            embed.add_field(
+                                name="📄 内容プレビュー (最初の100文字)",
+                                value=f"```\n{preview}\n```",
+                                inline=False
+                            )
+                            
+                            await channel.send(embed=embed)
+                            
+                            # ファイルをアップロード
+                            with open(file_path, 'rb') as f:
+                                file_data = f.read()
+                            
+                            file_obj = io.BytesIO(file_data)
+                            file_message = await channel.send("🌐 URLの内容をテキストファイルにしました！\n⚠️ ページによっては内容を正しく取得できない場合があります。元のURLも合わせてご確認ください。", file=discord.File(file_obj, filename=filename))
+                            
+                            # URLコンテンツファイルに自動でリアクションを追加
+                            reactions = ['👍', '❓', '❤️', '✏️', '📝']
+                            for reaction in reactions:
+                                try:
+                                    await file_message.add_reaction(reaction)
+                                    await asyncio.sleep(0.5)  # Discord API レート制限対策
+                                except Exception as e:
+                                    logger.warning(f"リアクション追加エラー ({reaction}): {e}")
+                            
+                            logger.info("URLコンテンツファイルにリアクションを追加しました")
+                            
+                            # ファイル削除
+                            try:
+                                file_path.unlink()
+                                logger.info(f"一時ファイル削除: {file_path}")
+                            except Exception as cleanup_error:
+                                logger.warning(f"ファイル削除エラー: {cleanup_error}")
+                            
+                        except Exception as e:
+                            logger.error(f"URLコンテンツ処理エラー: {e}")
+                            await channel.send(f"{user.mention} ❌ ファイルの作成中にエラーが発生しました。")
+                    else:
+                        await channel.send(f"{user.mention} ❌ URLからコンテンツを取得できませんでした。\n💡 タイムアウト（30秒）やアクセス制限が原因の可能性があります。")
+                else:
+                    await channel.send(f"{user.mention} ⚠️ メッセージにURLが見つかりません。")
 
 @bot.event
 async def on_message(message):
@@ -2158,12 +2334,20 @@ async def on_message(message):
             # メッセージ内容があるかチェック
             has_content = bool(message.content.strip())
             
+            # URL検出
+            has_url = contains_url(message.content) if message.content else False
+            is_url_only = is_url_only_message(message.content) if message.content else False
+            
             # 最初のリアクション前に1秒待機（エラー回避のため）
             await asyncio.sleep(1.0)
             
             # 音声ファイルのみの場合はマイクだけ
             if has_audio and not has_non_audio and not has_content:
                 await message.add_reaction('🎤')
+                await asyncio.sleep(0.3)
+            # URLのみの投稿の場合は🌐だけ
+            elif has_url and is_url_only and not has_audio and not has_non_audio:
+                await message.add_reaction('🌐')
                 await asyncio.sleep(0.3)
             else:
                 # その他の場合は基本リアクション
@@ -2177,6 +2361,11 @@ async def on_message(message):
                 # 音声ファイルがある場合はマイクも追加
                 if has_audio:
                     await message.add_reaction('🎤')
+                    await asyncio.sleep(0.3)
+                
+                # URLが含まれている場合は🌐も追加
+                if has_url:
+                    await message.add_reaction('🌐')
                     await asyncio.sleep(0.3)
             
             logger.info(f"自動リアクション追加完了: {message.channel.name} - {message.author.name}")
