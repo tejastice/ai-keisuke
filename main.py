@@ -93,7 +93,8 @@ async def fetch_url_content(url):
     """URLからコンテンツを取得してテキストを抽出"""
     try:
         # curlコマンドを使用してHTTPSサイトから取得（30秒タイムアウト）
-        result = subprocess.run(['curl', '-s', url], capture_output=True, text=True, timeout=30)
+        # Windows環境での文字化け対策: UTF-8エンコーディングを明示
+        result = subprocess.run(['curl', '-s', url], capture_output=True, timeout=30, encoding='utf-8', errors='replace')
         
         if result.returncode != 0:
             logger.error(f"Curl Error: {result.stderr}")
@@ -109,6 +110,25 @@ async def fetch_url_content(url):
     except subprocess.TimeoutExpired:
         logger.error(f"URL取得タイムアウト (30秒): {url}")
         return None
+    except UnicodeDecodeError as e:
+        logger.error(f"文字コードエラー: {e}")
+        # フォールバック: バイナリで取得してデコード試行
+        try:
+            result = subprocess.run(['curl', '-s', url], capture_output=True, timeout=30)
+            # UTF-8で試行、ダメならcp932、それでもダメなら無視
+            try:
+                html_content = result.stdout.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    html_content = result.stdout.decode('cp932')
+                except UnicodeDecodeError:
+                    html_content = result.stdout.decode('utf-8', errors='ignore')
+            
+            text_content = extract_text_from_html(html_content)
+            return text_content
+        except Exception as fallback_error:
+            logger.error(f"フォールバック処理エラー: {fallback_error}")
+            return None
     except Exception as e:
         logger.error(f"URL取得エラー: {e}")
         return None
