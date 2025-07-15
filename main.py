@@ -1217,17 +1217,19 @@ async def set_custom_prompt_article_command(interaction: discord.Interaction):
 
 # メモ作成用カスタムプロンプト設定のModalクラス
 class CustomMemoPromptModal(discord.ui.Modal, title='メモ作成用カスタムプロンプト設定'):
-    def __init__(self):
+    def __init__(self, current_prompt=None):
         super().__init__()
-
-    # テキスト入力エリア（複数行対応）
-    prompt_input = discord.ui.TextInput(
-        label='カスタムプロンプト',
-        placeholder='メモ作成用のプロンプトを入力してください...\n改行も使用できます。\n\n※ 空のまま送信するとカスタムプロンプトが無効になり、デフォルトプロンプトが使用されます。',
-        style=discord.TextStyle.paragraph,  # 複数行入力
-        max_length=2000,
-        required=False
-    )
+        
+        # テキスト入力エリア（複数行対応）
+        self.prompt_input = discord.ui.TextInput(
+            label='カスタムプロンプト',
+            placeholder='メモ作成用のプロンプトを入力してください...\n改行も使用できます。\n\n※ 空のまま送信するとカスタムプロンプトが無効になり、デフォルトプロンプトが使用されます。',
+            style=discord.TextStyle.paragraph,  # 複数行入力
+            max_length=2000,
+            required=False,
+            default=current_prompt if current_prompt else ''
+        )
+        self.add_item(self.prompt_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
