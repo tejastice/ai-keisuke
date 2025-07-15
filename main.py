@@ -1960,7 +1960,7 @@ async def on_raw_reaction_add(payload):
                                 memo_prompt = f.read()
                             logger.info("デフォルトメモプロンプトファイルを使用")
                         else:
-                            memo_prompt = "あなたはDiscordメッセージの内容をObsidianメモとして整理するアシスタントです。内容に忠実にメモ化してください。追加情報は加えず、原文を尊重してください。"
+                            memo_prompt = "あなたはDiscordメッセージの内容をObsidianメモとして整理するアシスタントです。内容に忠実にメモ化してください。追加情報は加えず、原文を尊重してください。客観的にみて不要と思われる情報は削除して構いません。"
                             logger.info("フォールバックメモプロンプトを使用")
                     
                     # プロンプトにJSON出力指示を追加（カスタムプロンプトでも対応）
